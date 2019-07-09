@@ -44,7 +44,7 @@ static struct hmm *hmm_get_or_create(struct mm_struct *mm)
 {
 	struct hmm *hmm;
 
-	lockdep_assert_held_exclusive(&mm->mmap_sem);
+	lockdep_assert_held_write(&mm->mmap_sem);
 
 	/* Abuse the page_table_lock to also protect mm->hmm. */
 	spin_lock(&mm->page_table_lock);
@@ -245,7 +245,7 @@ static const struct mmu_notifier_ops hmm_mmu_notifier_ops = {
  */
 int hmm_mirror_register(struct hmm_mirror *mirror, struct mm_struct *mm)
 {
-	lockdep_assert_held_exclusive(&mm->mmap_sem);
+	lockdep_assert_held_write(&mm->mmap_sem);
 
 	/* Sanity check */
 	if (!mm || !mirror || !mirror->ops)
