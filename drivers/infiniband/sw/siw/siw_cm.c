@@ -1963,6 +1963,7 @@ int siw_create_listen(struct iw_cm_id *id, int backlog)
 	if (id->local_addr.ss_family == AF_INET) {
 		struct in_device *in_dev = in_dev_get(dev);
 		struct sockaddr_in s_laddr, *s_raddr;
+		const struct in_ifaddr *ifa;
 
 		memcpy(&s_laddr, &id->local_addr, sizeof(s_laddr));
 		s_raddr = (struct sockaddr_in *)&id->remote_addr;
@@ -1973,8 +1974,7 @@ int siw_create_listen(struct iw_cm_id *id, int backlog)
 			&s_raddr->sin_addr, ntohs(s_raddr->sin_port));
 
 		rtnl_lock();
-		for_ifa(in_dev)
-		{
+		in_dev_for_each_ifa_rtnl(ifa, in_dev) {
 			if (ipv4_is_zeronet(s_laddr.sin_addr.s_addr) ||
 			    s_laddr.sin_addr.s_addr == ifa->ifa_address) {
 				s_laddr.sin_addr.s_addr = ifa->ifa_address;
@@ -1986,7 +1986,6 @@ int siw_create_listen(struct iw_cm_id *id, int backlog)
 					listeners++;
 			}
 		}
-		endfor_ifa(in_dev);
 		rtnl_unlock();
 		in_dev_put(in_dev);
 	} else if (id->local_addr.ss_family == AF_INET6) {

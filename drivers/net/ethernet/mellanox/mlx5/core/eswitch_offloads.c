@@ -225,7 +225,11 @@ mlx5_eswitch_add_offloaded_rule(struct mlx5_eswitch *esw,
 		goto err_esw_get;
 	}
 
-	rule = mlx5_add_flow_rules(fdb, spec, &flow_act, dest, i);
+	if (mlx5_eswitch_termtbl_required(esw, &flow_act, spec))
+		rule = mlx5_eswitch_add_termtbl_rule(esw, fdb, spec, attr,
+						     &flow_act, dest, i);
+	else
+		rule = mlx5_add_flow_rules(fdb, spec, &flow_act, dest, i);
 	if (IS_ERR(rule))
 		goto err_add_rule;
 	else
@@ -285,6 +289,7 @@ mlx5_eswitch_add_fwd_rule(struct mlx5_eswitch *esw,
 
 	mlx5_eswitch_set_rule_source_port(esw, spec, attr);
 
+	spec->match_criteria_enable |= MLX5_MATCH_MISC_PARAMETERS;
 	if (attr->match_level != MLX5_MATCH_NONE)
 		spec->match_criteria_enable |= MLX5_MATCH_OUTER_HEADERS;
 
@@ -311,8 +316,16 @@ __mlx5_eswitch_del_rule(struct mlx5_eswitch *esw,
 			bool fwd_rule)
 {
 	bool split = (attr->split_count > 0);
+	int i;
 
 	mlx5_del_flow_rules(rule);
+
+	/* unref the term table */
+	for (i = 0; i < MLX5_MAX_FLOW_FWD_VPORTS; i++) {
+		if (attr->dests[i].termtbl)
+			mlx5_eswitch_termtbl_put(esw, attr->dests[i].termtbl);
+	}
+
 	esw->offloads.num_flows--;
 
 	if (fwd_rule)  {
@@ -1772,8 +1785,8 @@ static int esw_vport_add_ingress_acl_modify_metadata(struct mlx5_eswitch *esw,
 						     struct mlx5_vport *vport)
 {
 	u8 action[MLX5_UN_SZ_BYTES(set_action_in_add_action_in_auto)] = {};
+	static const struct mlx5_flow_spec spec = {};
 	struct mlx5_flow_act flow_act = {};
-	struct mlx5_flow_spec spec = {};
 	int err = 0;
 
 	MLX5_SET(set_action_in, action, action_type, MLX5_ACTION_TYPE_SET);
@@ -2118,6 +2131,12 @@ int esw_offloads_init(struct mlx5_eswitch *esw)
 {
 	int err;
 
+	if (MLX5_CAP_ESW_FLOWTABLE_FDB(esw->dev, reformat) &&
+	    MLX5_CAP_ESW_FLOWTABLE_FDB(esw->dev, decap))
+		esw->offloads.encap = DEVLINK_ESWITCH_ENCAP_MODE_BASIC;
+	else
+		esw->offloads.encap = DEVLINK_ESWITCH_ENCAP_MODE_NONE;
+
 	err = esw_offloads_steering_init(esw);
 	if (err)
 		return err;
@@ -2133,6 +2152,7 @@ int esw_offloads_init(struct mlx5_eswitch *esw)
 		goto err_reps;
 
 	esw_offloads_devcom_init(esw);
+	mutex_init(&esw->offloads.termtbl_mutex);
 
 	mlx5_rdma_enable_roce(esw->dev);
 
@@ -2173,6 +2193,7 @@ void esw_offloads_cleanup(struct mlx5_eswitch *esw)
 	if (mlx5_eswitch_vport_match_metadata_enabled(esw))
 		mlx5_eswitch_disable_passing_vport_metadata(esw);
 	esw_offloads_steering_cleanup(esw);
+	esw->offloads.encap = DEVLINK_ESWITCH_ENCAP_MODE_NONE;
 }
 
 static int esw_mode_from_devlink(u16 mode, u16 *mlx5_mode)
